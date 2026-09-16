@@ -26,86 +26,238 @@ class PlayerSprite():
         surface.blit(self.surface, self.rect)
 
 class Bullet:
-        def __init__(self, target_x, target_y, tier):
-            self.speed = 3
-            self.radius = 5
-            self.tier = tier
-            self.initialize_pos(target_x, target_y)
+        def __init__(self, x, y, vx, vy, radius=5):
+            #self.speed = 3
+            self.x = float(x)
+            self.y = float(y)
+            self.vx = vx
+            self.vy = vy
+            self.radius = radius
 
             self.surface = pygame.Surface((self.radius*2, self.radius*2), pygame.SRCALPHA)
             pygame.draw.circle(self.surface, (255, 255, 255), (self.radius,self.radius), self.radius)
             self.rect = self.surface.get_rect(center= (self.x,self.y))
-
-        def draw(self, surface):
-            surface.blit(self.surface, self.rect)
 
         def move(self):
             self.x+=self.vx
             self.y+=self.vy
             self.rect.center = (int(self.x), int(self.y))
 
-        def initialize_pos(self, target_x, target_y):
-            side = random.choice(["top","bottom","left","right"])
-            if side == "top":
-                self.x, self.y = random.randint(BOX_RECT.left, BOX_RECT.right), BOX_RECT.top-12
-            elif side == "bottom":
-                self.x, self.y = random.randint(BOX_RECT.left, BOX_RECT.right), BOX_RECT.bottom+12
-            elif side == "left":
-                self.x, self.y =  BOX_RECT.left-12, random.randint(BOX_RECT.top, BOX_RECT.bottom)
-            elif side == "right":
-                self.x, self.y =  BOX_RECT.right+12,random.randint(BOX_RECT.top, BOX_RECT.bottom)
+        def draw(self, surface):
+            surface.blit(self.surface, self.rect)
 
-            if self.tier == 1:
-                self.wave_attack(side)
-            elif self.tier == 2:
-                self.tier2()
-            elif self.tier == 3:
-                self.homing_attack(target_x, target_y)
+class OscillatingBullet(Bullet):
+    def __init__(self, x, y, vx, vy, amplitude=20, frequency=0.1, radius=5):
+        super().__init__(x,y,vx,vy, radius)
+
+        self.base_x = float(x)
+        self.base_y = float(y)
+
+        self.amplitude = amplitude
+        self.frequency = frequency
+        self.time = 0
+
+        self.forward_angle = math.atan2(vy,vx)
+        self.perp_angle = self.forward_angle + (math.pi / 2)
+    
+    def move(self):
+        self.time +=1
+        self.base_x += self.vx
+        self.base_y += self.vy
+
+        wave_offset = math.sin(self.time * self.frequency) * self.amplitude
+
+        self.x = self.base_x + math.cos(self.perp_angle) * wave_offset
+        self.y = self.base_y + math.sin(self.perp_angle) * wave_offset
+
+        self.rect.center = (int(self.x), int(self.y))
+
+class Bomb:
+    def __init__(self, x, y, vx, vy, fuse_frames = 120, shrapnel_count = 12, shrapnel_speed=3, radius=8):
+        self.x = x
+        self.y = y
+        self.vx = vx
+        self.vy = vy
+        self.fuse_timer = fuse_frames
+        self.shrapnel_count = shrapnel_count
+        self.shrapnel_speed = shrapnel_speed 
+        self.radius = radius   
+
+        self.active = True
+        self.has_exploded = False
+        self.rect = pygame.Rect(x-self.radius, y-self.radius, 16, 16)
+    
+    def update(self, player_rect):
+        if not self.active:
+            return
+
+        self.x += self.vx
+        self.y += self.vy
         
-        def wave_attack(self, side):
-            if side == "top":
-                
-                self.vx = 0 
-                self.vy = self.speed
-            elif side == "bottom":
-                
-                self.vx = 0 
-                self.vy = -self.speed
-            elif side == "left":
-                
-                self.vx = self.speed 
-                self.vy = 0
-            elif side == "right":
-                
-                self.vx = -self.speed 
-                self.vy = 0
+        self.vx *= 0.96
+        self.vy *= 0.96
 
-        def tier2(self):
-            pass
+        self.rect.center = (int(self.x), int(self.y))
 
-        def homing_attack(self, target_x, target_y):
-            angle = math.atan2(target_y - self.y, target_x - self.x)
-            self.vx = math.cos(angle) * self.speed
-            self.vy = math.sin(angle) * self.speed
+        self.fuse_timer -= 1
+        player_collide = self.rect.colliderect(player_rect)
+
+        if self.fuse_timer <= 0 or player_collide:
+            self.has_exploded = True
+            self.active = False
+    
+    def explode(self):
+        exploded_bullets = []
+        angle_increment = (2*math.pi) / self.shrapnel_count
+
+        for i in range(self.shrapnel_count):
+            angle = i* angle_increment
+            vx = math.cos(angle) * self.shrapnel_speed
+            vy = math.sin(angle) * self.shrapnel_speed
+            exploded_bullets.append(Bullet(self.x, self.y, vx, vy, radius=4))
+        return exploded_bullets
+
+    def draw(self, surface):
+        pygame.draw.circle(surface, (255,255,255), (int(self.x), int(self.y)), self.radius)
+        
+        if self.vx <= 0.3 and self.vy <=0.3:
+            flash= (255,0,0) if (self.fuse_timer // 6) % 2 == 0 else (255,165,0)
+            pygame.draw.circle(surface, flash, (int(self.x), int(self.y)), self.radius)
+        
 
 class Enemy:
-    def __init__(self):
-        pass
+    def __init__(self,player, name="Boss",hp=100):
+        self.name = name
+        self.hp = hp
+        self.timer = 0
+        self.current_attack = ""
+        self.player = player
 
-    def bullet_attacks(self):
-        def wave():
-            pass
+    def create_straight_bullet(self, x, y, vx, vy):
+        return Bullet(x, y, vx, vy)
+    
+    def create_targeted_bullet(self, x, y, speed=3):
+        tx, ty = self.player.rect.centerx, self.player.rect.centery
+        angle = math.atan2(ty - y, tx - x)
+        return Bullet(x,y, math.cos(angle)*speed, math.sin(angle)*speed)
+    
+    def create_oscillating_bullet(self, x, y, vx, vy, amplitude=25, frequency=0.12):
+        return OscillatingBullet(x, y, vx, vy, amplitude=amplitude, frequency=frequency)
+
+    def pick_side(self):
+        side = random.choice(["top","bottom","left","right"])
+        if side == "top":
+            return random.randint(BOX_RECT.left, BOX_RECT.right), BOX_RECT.top-12
+        elif side == "bottom":
+            return  random.randint(BOX_RECT.left, BOX_RECT.right), BOX_RECT.bottom+12
+        elif side == "left":
+            return  BOX_RECT.left-12, random.randint(BOX_RECT.top, BOX_RECT.bottom)
+        elif side == "right":
+            return  BOX_RECT.right+12,random.randint(BOX_RECT.top, BOX_RECT.bottom)
+
+    def wave_barrage_attack(self):
+        '''Spawn 5 waves of 4 bullets in intervals of 15 frames'''
+        bullets = []
+
+        if self.timer % 15 == 0 and self.timer <= 75:
+            gap_x = random.randint(BOX_RECT.left + 40, BOX_RECT.right - 40)
+            for x in range(BOX_RECT.left +20, BOX_RECT.right, 35):
+                if abs(x-gap_x) > 30:
+                    bullets.append(self.create_straight_bullet(x, BOX_RECT.top -10, 0, 3))
+        return bullets
+    
+    def targeted_bursts_attack(self):
+        bullets = []
+
+        if self.timer in [10, 30, 50, 70]:
+            spawn_x = random.choice([BOX_RECT.left - 10, BOX_RECT.right + 10])
+            spawn_y = BOX_RECT.top - 10
+            bullets.append(self.create_targeted_bullet(spawn_x, spawn_y, speed=4))
+        return bullets
+    
+    def targeted_random_attack(self):
+        bullets = []
+
+        if self.timer % 20 == 0 and self.timer <= 260:
+            spawn_x, spawn_y = self.pick_side()
+
+            bullets.append(self.create_targeted_bullet(spawn_x, spawn_y))
+        return bullets
+
+    def triple_oscillating_attck(self):
+        bullets = []
+        if self.timer == 30:
+            for spawn_x in [BOX_RECT.left +30, BOX_RECT.centerx, BOX_RECT.right-30]:
+                bullets.append(self.create_oscillating_bullet(x = spawn_x,y = BOX_RECT.top - 10, vx = 0, vy = 1.5, amplitude=30, frequency=0.15))
+        if self.timer == 90:
+            for spawn_x in [BOX_RECT.left +50, BOX_RECT.right-50]:
+                bullets.append(self.create_oscillating_bullet(x = spawn_x,y = BOX_RECT.top - 10, vx = 0, vy = 1.5, amplitude=30, frequency=0.15))
+                
+        return bullets
+
+    def conga_oscillating_attack(self):
+        bullets = []
+        if self.timer == 1:
+            self.current_spawn_x = random.randint(BOX_RECT.left +30,BOX_RECT.right-30)
+        if self.timer%10 == 0 and self.timer <= 150:
+            bullets.append(self.create_oscillating_bullet(x = self.current_spawn_x,y = BOX_RECT.top - 10, vx = 0, vy = 1.5, amplitude=30, frequency=0.15))
+                
+        return bullets
+    
+    def mine_attack(self):
+        bombs = []
+
+        if self.timer in [10,70,160]:
+            x = random.randint(BOX_RECT.left+30,BOX_RECT.right-30)
+            vy = random.randint(2,8)
+            shrapnel_count = random.randint(8,12)
+            bombs.append(Bomb(x=x,y=BOX_RECT.top - 10,vx=0,vy=vy,fuse_frames=120,shrapnel_count=shrapnel_count))
+        return bombs
+
+    def update(self):
+        new_bullets = []
+        new_bombs = []
+        self.timer +=1
+        if self.current_attack == "":
+            attack_length = 120
+
+        elif self.current_attack == "targeted_bursts_attack":
+            new_bullets = self.targeted_bursts_attack()
+            attack_length = 110
+
+        elif self.current_attack == "wave_barrage_attack":
+            new_bullets = self.wave_barrage_attack()
+            attack_length = 120
+
+        elif self.current_attack == "targeted_random_attack":
+            new_bullets = self.targeted_random_attack()
+            attack_length = 300 
         
-        def homing():
-            pass
+        elif self.current_attack == "triple_oscillating_attck":
+            new_bullets = self.triple_oscillating_attck()
+            attack_length = 210 
+        elif self.current_attack == "conga_oscillating_attack":
+            new_bullets = self.conga_oscillating_attack()
+            attack_length = 210 
+        elif self.current_attack == "mine_attack":
+            new_bombs = self.mine_attack()
+            attack_length = 300 
 
+        if self.timer >= attack_length:
+            attacks = ["targeted_bursts_attack","wave_barrage_attack","targeted_random_attack","triple_oscillating_attck","conga_oscillating_attack","mine_attack"]
+            self.current_attack = random.choice(attacks)
+            print("RESET", self.current_attack)
+            self.timer = 0
+
+        return new_bullets, new_bombs
+        
 class Game():
     def __init__(self):
         pygame.init()
         pygame.display.set_caption("Undertale-Type Game")
         self.clock = pygame.time.Clock()
 
-        self.window = pygame.display.set_mode((WIDTH,HEIGHT))
+        self.window = pygame.display.set_mode((WIDTH, HEIGHT))
         window_rect = pygame.Rect(0,0,self.window.get_width(),self.window.get_height())
         BOX_RECT.center = (window_rect.center[0], window_rect.center[1]+75)
         self.box_rect = BOX_RECT
@@ -113,8 +265,9 @@ class Game():
         self.game_font = pygame.font.Font(None, 36)
 
         self.player = PlayerSprite(self.box_rect.centerx, self.box_rect.centery)
+        self.current_enemy = Enemy(self.player)
         self.bullets = []
-        self.bullet_tier = 0
+        self.bombs = []
         self.timer = 0
         self.score = 0
         
@@ -151,35 +304,33 @@ class Game():
         self.player.rect.clamp_ip(self.inner_box)
 
     def update(self):
-        self.timer+=1
-        self.score += 1
-        
-        if self.score < 1800:
-            self.bullet_tier = 1
-        elif self.score >= 1800 and self.score <3600:
-            self.bullet_tier = 3
-        elif self.score >= 3600:
-            self.bullet_tier = 3
+        new_bullets, new_bombs = self.current_enemy.update()
+        self.bullets.extend(new_bullets)
+        self.bombs.extend(new_bombs)
 
-        if self.timer >= 30:
-            self.bullets.append(Bullet(self.player.rect.centerx, self.player.rect.centery, self.bullet_tier))
-            self.timer = 0
-
-        # Dealing with Bullets
         remaining_bullets = []
         for b in self.bullets:
             b.move()
 
             if b.rect.colliderect(self.player.rect):
-                self.player.hp -= 10
-                print("HIT HP:",self.player.hp)
-
-            elif (0 < b.x < WIDTH and 0 < b.y < HEIGHT):
+                self.player.hp -=10
+                print("HIT! Player HP:", self.player.hp)
+            elif (BOX_RECT.left - 50 < b.x <BOX_RECT.right + 50) and (BOX_RECT.top -50 < b.y < BOX_RECT.bottom):
                 remaining_bullets.append(b)
-                
         self.bullets = remaining_bullets
-        
 
+        remaining_bombs = []
+        for bomb in self.bombs:
+            bomb.update(self.player.rect)
+
+            if bomb.has_exploded:
+                self.bullets.extend(bomb.explode())
+            elif (BOX_RECT.left - 50 < bomb.x < BOX_RECT.right + 50) and (BOX_RECT.top - 50 < bomb.y < BOX_RECT.bottom + 50):
+                remaining_bombs.append(bomb)
+        self.bombs = remaining_bombs
+
+        self.score+=1
+    
     def render(self):
         self.window.fill((0,0,0))
        
@@ -190,6 +341,9 @@ class Game():
         #Other Sprite Rendering
         for b in self.bullets:
             b.draw(self.window)
+
+        for bomb in self.bombs:
+            bomb.draw(self.window)
 
         #UI Text
         hp = self.game_font.render(f"HP: {self.player.hp}", True, (255, 255, 255))
